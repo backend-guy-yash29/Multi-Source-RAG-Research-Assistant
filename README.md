@@ -36,7 +36,7 @@ You paste a mix of sources — a research paper PDF, a few URLs, a Notion doc �
 2. **Parse** — worker extracts raw text (httpx + BeautifulSoup, PyMuPDF, or Notion API).
 3. **Chunk** — text split into 512-token chunks with 64-token overlap.
 4. **Embed** — all chunks embedded in one batched API call.
-5. **Store** — vectors → Qdrant (with `source_id` payload); metadata → Postgres; status → `ready`.
+5. **Store** — vectors → Qdrant (with `source_id` in payload); metadata → Postgres; status → `ready`.
 6. **Stream** — query embedded, Qdrant returns top-8 chunks (filtered to session sources), LLM streams a grounded answer over WebSocket, final `done` frame carries citations.
 
 ---
@@ -49,7 +49,8 @@ Backend-first build. Each module covered over 1–3 days.
 - [x] Project folder structure
 - [x] Concepts: FastAPI / ASGI / Starlette / Uvicorn vs Gunicorn
 - [x] Concepts: SQLAlchemy vs Pydantic, `Base` + metadata
-- [x] `app/models/db.py` — all 5 models (`User`, `Source`, `Chunk`, `Session`, `Message`)
+- [x] `app/models/db.py` — 4 models (`User`, `Source`, `Session`, `Message`)
+- [x] Design decision: chunks stored exclusively in Qdrant, not Postgres
 - [ ] `app/core/config.py` — Pydantic Settings
 - [ ] `app/main.py` — FastAPI app factory
 
@@ -91,10 +92,17 @@ Backend-first build. Each module covered over 1–3 days.
 
 ## Database Schema
 
-`users` → owns → `sources`, `sessions`
-`sources` → broken into → `chunks` (cascade delete)
-`sessions` → scoped to `source_ids[]`, contains → `messages`
-`messages` → carry → `citations` (JSONB)
+```
+users
+ ├── owns → sources   (documents uploaded by the user)
+ └── owns → sessions  (conversations scoped to specific sources)
+
+sessions
+ ├── source_ids[]     (UUID array — which sources this session can search)
+ └── contains → messages (conversation turns with citations)
+```
+
+Chunks are **not** stored in Postgres. They live exclusively in Qdrant as vectors with a `source_id` payload field. On source deletion, Qdrant points are removed by filtering on `source_id`.
 
 See `backend/app/models/db.py` for the full SQLAlchemy definitions.
 
